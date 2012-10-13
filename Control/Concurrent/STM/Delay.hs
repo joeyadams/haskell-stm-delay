@@ -51,7 +51,7 @@ import Control.Concurrent.STM
 import Control.Exception        (mask_)
 import Control.Monad            (join)
 
-#if MIN_VERSION_base(4,4,0)
+#if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 import qualified GHC.Event as Ev
 #endif
 
@@ -112,7 +112,7 @@ tryWaitDelay (Delay v _ _) = readTVar v
 -- Drivers
 
 getDelayImpl :: (forall k. DelayImpl k -> IO r) -> IO r
-#if MIN_VERSION_base(4,4,0)
+#if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 getDelayImpl cont = do
     m <- Ev.getSystemEventManager
     case m of
@@ -122,7 +122,7 @@ getDelayImpl cont = do
 getDelayImpl cont = cont implThread
 #endif
 
-#if MIN_VERSION_base(4,4,0)
+#if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 -- | Use the timeout API in "GHC.Event"
 implEvent :: Ev.EventManager -> DelayImpl Ev.TimeoutKey
 implEvent mgr = DelayImpl
