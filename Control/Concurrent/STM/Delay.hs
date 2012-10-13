@@ -89,8 +89,8 @@ updateDelay :: Delay -> Int -> IO ()
 updateDelay (Delay var impl k) t =
     delayUpdate impl (atomically $ writeTVar var True) k t
 
--- | Set a 'Delay' so it will never ring.  If the 'Delay' has already rung,
--- do nothing.
+-- | Set a 'Delay' so it will never ring, even if 'updateDelay' is used later.
+-- If the 'Delay' has already rung, do nothing.
 cancelDelay :: Delay -> IO ()
 cancelDelay (Delay _var impl k) =
     delayStop impl k
@@ -152,7 +152,10 @@ implThread = DelayImpl
             m <- takeMVar mv
             case m of
                 Nothing -> do
-                    new >>= putMVar mv
+                    -- Don't create a new timer thread after the 'Delay' has
+                    -- been canceled.  Otherwise, the behavior is inconsistent
+                    -- with GHC.Event.
+                    putMVar mv Nothing
                     return (return ())
                 Just tt -> do
                     m' <- stopTimeoutThread tt
