@@ -33,3 +33,5 @@ library
     --
     --  * A threadDelay that doesn't give (-1) magic treatment.
     --    See http://hackage.haskell.org/trac/ghc/ticket/2892
+    --
+    --  * GHC.Event (called System.Event in base 4.3)

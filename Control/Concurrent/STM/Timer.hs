@@ -2,7 +2,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE Rank2Types #-}
 -- |
--- Module:      System.Timer
+-- Module:      Control.Concurrent.STM.Delay
 -- Copyright:   (c) Joseph Adams 2012
 -- License:     BSD3
 -- Maintainer:  joeyadams3.14159@gmail.com
@@ -12,135 +12,170 @@
 -- (see "GHC.Event").  Otherwise, it falls back to forked threads and
 -- 'threadDelay'.
 module Control.Concurrent.STM.Timer (
-    -- * Managing timers
-    Timer,
-    newTimer,
-    newTimer_,
-    setTimer,
-    clearTimer,
+    -- * Managing delays
+    Delay,
+    newDelay,
+    updateDelay,
+    cancelDelay,
 
     -- * Waiting for expiration
-    waitTimer,
-    tryWaitTimer,
+    waitDelay,
+    tryWaitDelay,
 ) where
 
-import Control.Applicative
+import Control.Applicative      ((<$>))
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Exception
+import Control.Exception        (mask_)
+import Control.Monad            (join)
 
+#if MIN_VERSION_base(4,4,0)
 import qualified GHC.Event as Ev
+#else
+import qualified System.Event as Ev
+#endif
 
--- | A 'Timer' can be in one of three states:
---
---  [Cleared] @waitTimer@ will 'retry' indefinitely.
---
---  [Pending] @waitTimer@ will 'retry' until a given length of time has passed.
---
---  [Expired] @waitTimer@ will return immediately.
-data Timer = forall k. Timer !(TVar (TVar Bool))
-                             !(TimerImpl k)
-                             !(MVar (Maybe k))
-    -- We use nested TVars so we can reset the timer atomically, without
-    -- worrying about listeners seeing an expiration before the reset process
-    -- is complete.
+-- | A 'Delay' is an updatable timer that rings only once.
+data Delay = forall k.
+             Delay !(TVar Bool)
+                   !(DelayImpl k)
+                   !k
 
-instance Eq Timer where
-    (==) (Timer a _ _) (Timer b _ _) = a == b
+instance Eq Delay where
+    (==) (Delay a _ _) (Delay b _ _) = a == b
 
-data TimerImpl k = TimerImpl
-    { timerStart :: Int -> IO () -> IO k
-    , timerStop  :: k -> IO ()
+type TimeoutCallback = IO ()
+
+data DelayImpl k = DelayImpl
+    { delayStart  :: Int -> TimeoutCallback -> IO k
+    , delayUpdate :: TimeoutCallback -> k -> Int -> IO ()
+    , delayStop   :: k -> IO ()
     }
 
-implThreadId :: TimerImpl ThreadId
-implThreadId = TimerImpl
-    { timerStart = \t signal -> compat_forkIOUnmasked (threadDelay t >> signal)
-    , timerStop  = killThread
-    }
+-- | Create a new 'Delay' that will ring in the given number of microseconds.
+newDelay :: Int -> IO Delay
+newDelay t = getDelayImpl (\impl -> newDelayWith impl t)
 
-implEvent :: Ev.EventManager -> TimerImpl Ev.TimeoutKey
-implEvent mgr = TimerImpl
-    { timerStart = Ev.registerTimeout   mgr
-    , timerStop  = Ev.unregisterTimeout mgr
-    }
+newDelayWith :: DelayImpl k -> Int -> IO Delay
+newDelayWith impl t = do
+    var <- newTVarIO False
+    k   <- delayStart impl t $ atomically $ writeTVar var True
+    return (Delay var impl k)
 
-getTimerImpl :: (forall k. TimerImpl k -> IO r) -> IO r
-getTimerImpl cont = do
-    m <- Ev.getSystemEventManager
-    case m of
-        Nothing  -> cont implThreadId
-        Just mgr -> cont (implEvent mgr)
+-- | Set an existing 'Delay' to ring in the given number of microseconds
+-- (after 'updateDelay' is called), rather than when it was going to ring.
+-- If the 'Delay' has already rung, do nothing.
+updateDelay :: Delay -> Int -> IO ()
+updateDelay (Delay var impl k) t =
+    delayUpdate impl (atomically $ writeTVar var True) k t
 
--- | Create a new timer in the /pending/ state, which will expire in the given
--- number of microseconds.
-newTimer :: Int -> IO Timer
-newTimer t = getTimerImpl (\impl -> newTimerWith impl t)
+-- | Set a 'Delay' so it will never ring.  If the 'Delay' has already rung,
+-- do nothing.
+cancelDelay :: Delay -> IO ()
+cancelDelay (Delay _var impl k) =
+    delayStop impl k
 
-newTimerWith :: TimerImpl a -> Int -> IO Timer
-newTimerWith impl t = do
-    var  <- newTVarIO False
-    var' <- newTVarIO var
-    k    <- timerStart impl t $ atomically $ writeTVar var True
-    Timer var' impl <$> newMVar (Just k)
-
--- | Create a new timer in the /cleared/ state, meaning 'waitTimer' will block
--- indefinitely until you set it with 'setTimer'.
-newTimer_ :: IO Timer
-newTimer_ = getTimerImpl newTimerWith_
-
-newTimerWith_ :: TimerImpl a -> IO Timer
-newTimerWith_ impl = do
-    var  <- newTVarIO False
-    var' <- newTVarIO var
-    Timer var' impl <$> newMVar Nothing
-
--- | Set an existing timer to expire in the given number of microseconds,
--- overriding any setting already in effect.  This will place the timer in the
--- /pending/ state.
-setTimer :: Timer -> Int -> IO ()
-setTimer (Timer var' impl mv) t =
-    mask_ $ do
-        -- Create a new timeout
-        var <- newTVarIO False
-        k   <- timerStart impl t $ atomically $ writeTVar var True
-
-        -- Take the timer lock.  If we receive an asynchronous exception
-        -- (which is possible even in mask_, because takeMVar is interruptible),
-        -- free the timer we just created.
-        m <- takeMVar mv `onException` timerStop impl k
-
-        -- Make listeners see the new timeout status instead of the old one.
-        atomically $ writeTVar var' var
-
-        -- Restore the timer lock.
-        putMVar mv (Just k)
-
-        -- Free the old timeout, if one was present.
-        maybe (return ()) (timerStop impl) m
-
--- | Cancel a pending expiration, so 'waitTimer' will block indefinitely.
--- This will place the timer in the /cleared/ state.
-clearTimer :: Timer -> IO ()
-clearTimer (Timer var' impl mv) =
-    mask_ $ do
-        var <- newTVarIO False
-        m <- takeMVar mv
-        atomically $ writeTVar var' var
-        putMVar mv Nothing
-        maybe (return ()) (timerStop impl) m
-
--- | Block until the 'Timer' /expires/.
-waitTimer :: Timer -> STM ()
-waitTimer timer = do
-    expired <- tryWaitTimer timer
+-- | Block until the 'Delay' rings.  If the 'Delay' has already rung,
+-- return immediately.
+waitDelay :: Delay -> STM ()
+waitDelay delay = do
+    expired <- tryWaitDelay delay
     if expired then return ()
                else retry
 
--- | Non-blocking version of 'waitTimer'.
--- Return 'True' if the 'Timer' has /expired/.
-tryWaitTimer :: Timer -> STM Bool
-tryWaitTimer (Timer v _ _) = readTVar v >>= readTVar
+-- | Non-blocking version of 'waitDelay'.
+-- Return 'True' if the 'Delay' has rung.
+tryWaitDelay :: Delay -> STM Bool
+tryWaitDelay (Delay v _ _) = readTVar v
+
+------------------------------------------------------------------------
+-- Drivers
+
+getDelayImpl :: (forall k. DelayImpl k -> IO r) -> IO r
+getDelayImpl cont = do
+    m <- Ev.getSystemEventManager
+    case m of
+        Nothing  -> cont implThread
+        Just mgr -> cont (implEvent mgr)
+
+-- | Use the timeout API in "GHC.Event"
+implEvent :: Ev.EventManager -> DelayImpl Ev.TimeoutKey
+implEvent mgr = DelayImpl
+    { delayStart  = Ev.registerTimeout mgr
+    , delayUpdate = \_ -> Ev.updateTimeout mgr
+    , delayStop   = Ev.unregisterTimeout mgr
+    }
+
+-- | Use threads and threadDelay:
+--
+--  [delayStart] Fork a thread to wait the given length of time,
+--               then set the TVar.
+--
+--  [delayUpdate] Stop the existing thread and fork a new thread.
+--
+--  [delayStop] Stop the existing thread.
+implThread :: DelayImpl (MVar (Maybe TimeoutThread))
+implThread = DelayImpl
+    { delayStart  = \t io -> forkTimeoutThread t io >>= newMVar . Just
+    , delayUpdate = \io mv t -> replaceThread (Just <$> forkTimeoutThread t io) mv
+    , delayStop   = replaceThread (return Nothing)
+    }
+  where
+    replaceThread new mv =
+        join $ mask_ $ do
+            m <- takeMVar mv
+            case m of
+                Nothing -> do
+                    new >>= putMVar mv
+                    return (return ())
+                Just tt -> do
+                    m' <- stopTimeoutThread tt
+                    new >>= putMVar mv
+                    return $ case m' of
+                        Nothing   -> return ()
+                        Just kill -> kill
+
+------------------------------------------------------------------------
+-- TimeoutThread
+
+data TimeoutThread = TimeoutThread !ThreadId !(MVar ())
+
+-- instance Eq TimeoutThread where
+--     (==) (TimeoutThread a _) (TimeoutThread b _) = a == b
+-- instance Ord TimeoutThread where
+--     compare (TimeoutThread a _) (TimeoutThread b _) = compare a b
+
+-- | Fork a thread to perform an action after the given number of
+-- microseconds.
+--
+-- 'forkTimeoutThread' is non-interruptible.
+forkTimeoutThread :: Int -> IO () -> IO TimeoutThread
+forkTimeoutThread t io = do
+    mv <- newMVar ()
+    tid <- compat_forkIOUnmasked $ do
+        threadDelay t
+        m <- tryTakeMVar mv
+        -- If m is Just, this thread will not be interrupted,
+        -- so no need for a 'mask' between the tryTakeMVar and the action.
+        case m of
+            Nothing -> return ()
+            Just _  -> io
+    return (TimeoutThread tid mv)
+
+-- | Prevent the 'TimeoutThread' from performing its action.  If it's too late,
+-- return 'Nothing'.  Otherwise, return an action (namely, 'killThread') for
+-- cleaning up the underlying thread.
+--
+-- 'stopTimeoutThread' has a nice property: it is /non-interruptible/.
+-- This means that, in an exception 'mask', it will not poll for exceptions.
+-- See "Control.Exception" for more info.
+--
+-- However, the action returned by 'stopTimeoutThread' /does/ poll for
+-- exceptions.  That's why 'stopTimeoutThread' returns this action rather than
+-- simply doing it.  This lets the caller do it outside of a critical section.
+stopTimeoutThread :: TimeoutThread -> IO (Maybe (IO ()))
+stopTimeoutThread (TimeoutThread tid mv) =
+    maybe Nothing (\_ -> Just (killThread tid)) <$> tryTakeMVar mv
 
 ------------------------------------------------------------------------
 -- Compatibility
