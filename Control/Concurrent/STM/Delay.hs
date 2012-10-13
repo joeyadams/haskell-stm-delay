@@ -51,7 +51,9 @@ import Control.Concurrent.STM
 import Control.Exception        (mask_)
 import Control.Monad            (join)
 
+#if MIN_VERSION_base(4,4,0)
 import qualified GHC.Event as Ev
+#endif
 
 -- | A 'Delay' is an updatable timer that rings only once.
 data Delay = forall k.
@@ -110,12 +112,17 @@ tryWaitDelay (Delay v _ _) = readTVar v
 -- Drivers
 
 getDelayImpl :: (forall k. DelayImpl k -> IO r) -> IO r
+#if MIN_VERSION_base(4,4,0)
 getDelayImpl cont = do
     m <- Ev.getSystemEventManager
     case m of
         Nothing  -> cont implThread
         Just mgr -> cont (implEvent mgr)
+#else
+getDelayImpl cont = cont implThread
+#endif
 
+#if MIN_VERSION_base(4,4,0)
 -- | Use the timeout API in "GHC.Event"
 implEvent :: Ev.EventManager -> DelayImpl Ev.TimeoutKey
 implEvent mgr = DelayImpl
@@ -123,6 +130,7 @@ implEvent mgr = DelayImpl
     , delayUpdate = \_ -> Ev.updateTimeout mgr
     , delayStop   = Ev.unregisterTimeout mgr
     }
+#endif
 
 -- | Use threads and threadDelay:
 --
