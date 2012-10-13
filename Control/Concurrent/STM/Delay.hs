@@ -8,9 +8,31 @@
 -- Maintainer:  joeyadams3.14159@gmail.com
 -- Portability: Requires GHC 7+
 --
--- This uses event manager timeouts when the threaded RTS is available
--- (see "GHC.Event").  Otherwise, it falls back to forked threads and
--- 'threadDelay'.
+-- One-shot timer whose duration can be updated
+--
+-- Suppose you are managing a network connection, and want to time it out if no
+-- messages are received in over five minutes.  You can do something like this:
+--
+-- >import Control.Concurrent.Async (race_) -- from the async package
+-- >import Control.Concurrent.STM
+-- >import Control.Concurrent.STM.Delay
+-- >import Control.Exception
+-- >import Control.Monad
+-- >
+-- >manageConnection :: Connection -> IO Message -> (Message -> IO a) -> IO ()
+-- >manageConnection conn toSend onRecv =
+-- >    bracket (newDelay five_minutes) cancelDelay $ \delay ->
+-- >    foldr1 race_
+-- >        [ do atomically $ waitDelay delay
+-- >             fail "Connection timed out"
+-- >        , forever $ toSend >>= send conn
+-- >        , forever $ do
+-- >            msg <- recv conn
+-- >            updateDelay delay five_minutes
+-- >            onRecv msg
+-- >        ]
+-- >  where
+-- >    five_minutes = 5 * 60 * 1000000
 module Control.Concurrent.STM.Delay (
     -- * Managing delays
     Delay,
