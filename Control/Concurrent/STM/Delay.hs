@@ -43,6 +43,7 @@ module Control.Concurrent.STM.Delay (
     -- * Waiting for expiration
     waitDelay,
     tryWaitDelay,
+    tryWaitDelayIO,
 ) where
 
 import Control.Applicative      ((<$>))
@@ -107,6 +108,12 @@ waitDelay delay = do
 -- Return 'True' if the 'Delay' has rung.
 tryWaitDelay :: Delay -> STM Bool
 tryWaitDelay (Delay v _ _) = readTVar v
+
+-- | Faster version of @'atomically' . 'tryWaitDelay'@.  See 'readTVarIO'.
+--
+-- Since 0.1.1
+tryWaitDelayIO :: Delay -> IO Bool
+tryWaitDelayIO (Delay v _ _) = readTVarIO v
 
 ------------------------------------------------------------------------
 -- Drivers
