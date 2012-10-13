@@ -22,7 +22,7 @@ library
 
     ghc-options: -Wall -fwarn-tabs
 
-    build-depends: base >= 4.3
+    build-depends: base >= 4.4
                  , stm
 
     -- Need base >= 4.3 for:
@@ -35,3 +35,8 @@ library
     --    See http://hackage.haskell.org/trac/ghc/ticket/2892
     --
     --  * GHC.Event (called System.Event in base 4.3)
+    --
+    -- Need base >= 4.4 for:
+    --
+    --  * GHC.Event.  base-4.3 calls it System.Event, but does not provide
+    --    'getSystemEventManager'.

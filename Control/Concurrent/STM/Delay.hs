@@ -29,11 +29,7 @@ import Control.Concurrent.STM
 import Control.Exception        (mask_)
 import Control.Monad            (join)
 
-#if MIN_VERSION_base(4,4,0)
 import qualified GHC.Event as Ev
-#else
-import qualified System.Event as Ev
-#endif
 
 -- | A 'Delay' is an updatable timer that rings only once.
 data Delay = forall k.
