@@ -1,8 +1,8 @@
-name:               stm-timer
+name:               stm-delay
 version:            0.1
 synopsis:           todo
 description:
-homepage:           https://github.com/joeyadams/haskell-stm-timer
+homepage:           https://github.com/joeyadams/haskell-stm-delay
 license:            BSD3
 license-file:       LICENSE
 author:             Joey Adams
@@ -14,11 +14,11 @@ cabal-version:      >=1.8
 
 source-repository head
     type:       git
-    location:   git://github.com/joeyadams/haskell-stm-timer.git
+    location:   git://github.com/joeyadams/haskell-stm-delay.git
 
 library
     exposed-modules:
-        Control.Concurrent.STM.Timer
+        Control.Concurrent.STM.Delay
 
     ghc-options: -Wall -fwarn-tabs
 

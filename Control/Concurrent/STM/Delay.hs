@@ -11,7 +11,7 @@
 -- This uses event manager timeouts when the threaded RTS is available
 -- (see "GHC.Event").  Otherwise, it falls back to forked threads and
 -- 'threadDelay'.
-module Control.Concurrent.STM.Timer (
+module Control.Concurrent.STM.Delay (
     -- * Managing delays
     Delay,
     newDelay,
