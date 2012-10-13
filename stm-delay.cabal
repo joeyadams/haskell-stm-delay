@@ -17,7 +17,7 @@ maintainer:         joeyadams3.14159@gmail.com
 copyright:          Copyright (c) Joseph Adams 2012
 category:           System
 build-type:         Simple
-cabal-version:      >=1.8
+cabal-version:      >= 1.8
 
 source-repository head
     type:       git
@@ -29,7 +29,7 @@ library
 
     ghc-options: -Wall -fwarn-tabs
 
-    build-depends: base >= 4.3
+    build-depends: base >= 4.3 && < 5
                  , stm
 
     -- Need base >= 4.3 for:
@@ -42,3 +42,35 @@ library
     --    See http://hackage.haskell.org/trac/ghc/ticket/2892
     --
     --  * GHC.Event (called System.Event in base 4.3)
+
+test-suite test
+    type: exitcode-stdio-1.0
+
+    hs-source-dirs: test
+    main-is: Main.hs
+
+    ghc-options: -Wall
+                 -fno-warn-missing-signatures
+                 -fno-warn-name-shadowing
+                 -fno-warn-unused-do-bind
+                 -fno-warn-unused-matches
+
+    build-depends: base >= 4.3 && < 5
+                 , stm
+                 , stm-delay
+
+test-suite test-threaded
+    type: exitcode-stdio-1.0
+
+    hs-source-dirs: test
+    main-is: Main.hs
+
+    ghc-options: -Wall -threaded
+                 -fno-warn-missing-signatures
+                 -fno-warn-name-shadowing
+                 -fno-warn-unused-do-bind
+                 -fno-warn-unused-matches
+
+    build-depends: base >= 4.3 && < 5
+                 , stm
+                 , stm-delay
