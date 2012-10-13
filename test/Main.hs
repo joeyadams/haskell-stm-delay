@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.STM.Delay
@@ -40,22 +42,28 @@ trivial = do
     -- 'newDelay n' where n <= 0 times out immediately,
     -- rather than never timing out.
     (delay, wait) <- new 0
-    threadDelay 10
+    threadDelay 100
     True <- wait
     (delay, wait) <- new (-1)
-    threadDelay 10
+    threadDelay 100
     True <- wait
 
-    -- This fails on Windows without -threaded,
-    -- as 'threadDelay minBound' blocks.
-    --
-    -- (delay, wait) <- new minBound
-    -- threadDelay 10
-    -- True <- wait
+    -- This fails on Windows without -threaded, as 'threadDelay minBound'
+    -- blocks.  It also fails on Linux using GHC 7.0.3 without -threaded.
+#if !mingw32_HOST_OS && MIN_VERSION_base(4,4,0)
+    (delay, wait) <- new minBound
+    threadDelay 1000
+    True <- wait
+#endif
 
     -- 'newDelay maxBound' doesn't time out any time soon,
     -- and updateDelay doesn't wait for the delay to complete.
-    (delay, wait) <- new maxBound
+    --
+    -- Using maxBound currently fails on Linux 64-bit (see GHC ticket #7325),
+    -- so use a more lenient value for now.
+    --
+    -- (delay, wait) <- new maxBound
+    (delay, wait) <- new 2147483647
     False <- wait
     threadDelay 100000
     False <- wait
