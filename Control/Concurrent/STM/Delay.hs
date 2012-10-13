@@ -83,8 +83,8 @@ newDelayWith impl t = do
     return (Delay var impl k)
 
 -- | Set an existing 'Delay' to ring in the given number of microseconds
--- (after 'updateDelay' is called), rather than when it was going to ring.
--- If the 'Delay' has already rung, do nothing.
+-- (from the time 'updateDelay' is called), rather than when it was going to
+-- ring.  If the 'Delay' has already rung, do nothing.
 updateDelay :: Delay -> Int -> IO ()
 updateDelay (Delay var impl k) t =
     delayUpdate impl (atomically $ writeTVar var True) k t
