@@ -8,31 +8,7 @@
 -- Maintainer:  joeyadams3.14159@gmail.com
 -- Portability: Requires GHC 7+
 --
--- One-shot timer whose duration can be updated
---
--- Suppose you are managing a network connection, and want to time it out if no
--- messages are received in over five minutes.  You can do something like this:
---
--- >import Control.Concurrent.Async (race_) -- from the async package
--- >import Control.Concurrent.STM
--- >import Control.Concurrent.STM.Delay
--- >import Control.Exception
--- >import Control.Monad
--- >
--- >manageConnection :: Connection -> IO Message -> (Message -> IO a) -> IO ()
--- >manageConnection conn toSend onRecv =
--- >    bracket (newDelay five_minutes) cancelDelay $ \delay ->
--- >    foldr1 race_
--- >        [ do atomically $ waitDelay delay
--- >             fail "Connection timed out"
--- >        , forever $ toSend >>= send conn
--- >        , forever $ do
--- >            msg <- recv conn
--- >            updateDelay delay five_minutes
--- >            onRecv msg
--- >        ]
--- >  where
--- >    five_minutes = 5 * 60 * 1000000
+-- One-shot timer whose duration can be updated.
 module Control.Concurrent.STM.Delay (
     -- * Managing delays
     Delay,
@@ -44,13 +20,16 @@ module Control.Concurrent.STM.Delay (
     waitDelay,
     tryWaitDelay,
     tryWaitDelayIO,
+
+    -- * Example
+    -- $example
 ) where
 
 import Control.Applicative      ((<$>))
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception        (mask_)
-import Control.Monad            (join)
+import Control.Monad
 
 #if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 import qualified GHC.Event as Ev
@@ -229,3 +208,39 @@ compat_forkIOUnmasked io = forkIOWithUnmask (\_ -> io)
 #else
 compat_forkIOUnmasked = forkIOUnmasked
 #endif
+
+------------------------------------------------------------------------
+
+{- $example
+Suppose we are managing a network connection, and want to time it out if no
+messages are received in over five minutes.  We'll create a 'Delay', and an
+action to \"bump\" it:
+
+@
+  let timeoutInterval = 5 * 60 * 1000000 :: 'Int'
+  delay <- 'newDelay' timeoutInterval
+  let bump = 'updateDelay' delay timeoutInterval
+@
+
+This way, the 'Delay' will ring if it is not bumped for longer than
+five minutes.
+
+Now we fork the receiver thread:
+
+@
+  dead <- 'newEmptyTMVarIO'
+  _ <- 'forkIO' $
+    ('forever' $ do
+         msg <- recvMessage
+         bump
+         handleMessage msg
+     ) \`finally\` 'atomically' ('putTMVar' dead ())
+@
+
+Finally, we wait for the delay to ring, or for the receiver thread to fail due
+to an exception:
+
+@
+  'atomically' $ 'waitDelay' delay \`orElse\` 'readTMVar' dead
+@
+-}
