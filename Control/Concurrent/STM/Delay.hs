@@ -166,10 +166,17 @@ implThread = DelayImpl
                     return (return ())
                 Just tt -> do
                     m' <- stopTimeoutThread tt
-                    new >>= putMVar mv
-                    return $ case m' of
-                        Nothing   -> return ()
-                        Just kill -> kill
+                    case m' of
+                        Nothing -> do
+                            -- Timer already rang (or will ring very soon).
+                            -- Don't start a new timer thread, since it will
+                            -- waste resources and have no externally
+                            -- observable effect.
+                            putMVar mv Nothing
+                            return $ return ()
+                        Just kill -> do
+                            new >>= putMVar mv
+                            return kill
 
 ------------------------------------------------------------------------
 -- TimeoutThread
