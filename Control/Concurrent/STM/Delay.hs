@@ -54,7 +54,21 @@ data DelayImpl k = DelayImpl
 
 -- | Create a new 'Delay' that will ring in the given number of microseconds.
 newDelay :: Int -> IO Delay
-newDelay t = getDelayImpl (\impl -> newDelayWith impl t)
+newDelay t
+  | t > 0 = getDelayImpl (\impl -> newDelayWith impl t)
+
+  -- Special case zero timeout, so user can create an
+  -- already-rung 'Delay' efficiently.
+  | otherwise = do
+        var <- newTVarIO True
+        return (Delay var dummyImpl ())
+
+dummyImpl :: DelayImpl ()
+dummyImpl = DelayImpl
+    { delayStart  = \_t _cb -> return ()
+    , delayUpdate = \_cb _k _t -> return ()
+    , delayStop   = \_k -> return ()
+    }
 
 newDelayWith :: DelayImpl k -> Int -> IO Delay
 newDelayWith impl t = do
