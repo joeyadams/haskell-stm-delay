@@ -1,6 +1,4 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE Rank2Types #-}
 -- |
 -- Module:      Control.Concurrent.STM.Delay
 -- Copyright:   (c) Joseph Adams 2012
@@ -29,7 +27,6 @@ module Control.Concurrent.STM.Delay (
     -- $example
 ) where
 
-import Control.Applicative      ((<$>))
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception        (mask_)
@@ -40,58 +37,40 @@ import qualified GHC.Event as Ev
 #endif
 
 -- | A 'Delay' is an updatable timer that rings only once.
-data Delay = forall k.
-             Delay !(TVar Bool)
-                   !(DelayImpl k)
-                   !k
+data Delay = Delay
+    { delayVar    :: !(TVar Bool)
+    , delayUpdate :: !(Int -> IO ())
+    , delayCancel :: !(IO ())
+    }
 
 instance Eq Delay where
-    (==) (Delay a _ _) (Delay b _ _) = a == b
-
-type TimeoutCallback = IO ()
-
-data DelayImpl k = DelayImpl
-    { delayStart  :: Int -> TimeoutCallback -> IO k
-    , delayUpdate :: TimeoutCallback -> k -> Int -> IO ()
-    , delayStop   :: k -> IO ()
-    }
+    (==) a b = delayVar a == delayVar b
 
 -- | Create a new 'Delay' that will ring in the given number of microseconds.
 newDelay :: Int -> IO Delay
 newDelay t
-  | t > 0 = getDelayImpl (\impl -> newDelayWith impl t)
+  | t > 0 = getDelayImpl t
 
   -- Special case zero timeout, so user can create an
   -- already-rung 'Delay' efficiently.
   | otherwise = do
         var <- newTVarIO True
-        return (Delay var dummyImpl ())
-
-dummyImpl :: DelayImpl ()
-dummyImpl = DelayImpl
-    { delayStart  = \_t _cb -> return ()
-    , delayUpdate = \_cb _k _t -> return ()
-    , delayStop   = \_k -> return ()
-    }
-
-newDelayWith :: DelayImpl k -> Int -> IO Delay
-newDelayWith impl t = do
-    var <- newTVarIO False
-    k   <- delayStart impl t $ atomically $ writeTVar var True
-    return (Delay var impl k)
+        return Delay
+            { delayVar    = var
+            , delayUpdate = \_t -> return ()
+            , delayCancel = return ()
+            }
 
 -- | Set an existing 'Delay' to ring in the given number of microseconds
 -- (from the time 'updateDelay' is called), rather than when it was going to
 -- ring.  If the 'Delay' has already rung, do nothing.
 updateDelay :: Delay -> Int -> IO ()
-updateDelay (Delay var impl k) t =
-    delayUpdate impl (atomically $ writeTVar var True) k t
+updateDelay = delayUpdate
 
 -- | Set a 'Delay' so it will never ring, even if 'updateDelay' is used later.
 -- If the 'Delay' has already rung, do nothing.
 cancelDelay :: Delay -> IO ()
-cancelDelay (Delay _var impl k) =
-    delayStop impl k
+cancelDelay = delayCancel
 
 -- | Block until the 'Delay' rings.  If the 'Delay' has already rung,
 -- return immediately.
@@ -104,76 +83,89 @@ waitDelay delay = do
 -- | Non-blocking version of 'waitDelay'.
 -- Return 'True' if the 'Delay' has rung.
 tryWaitDelay :: Delay -> STM Bool
-tryWaitDelay (Delay v _ _) = readTVar v
+tryWaitDelay = readTVar . delayVar
 
 -- | Faster version of @'atomically' . 'tryWaitDelay'@.  See 'readTVarIO'.
 --
 -- Since 0.1.1
 tryWaitDelayIO :: Delay -> IO Bool
-tryWaitDelayIO (Delay v _ _) = readTVarIO v
+tryWaitDelayIO = readTVarIO . delayVar
 
 ------------------------------------------------------------------------
 -- Drivers
 
-getDelayImpl :: (forall k. DelayImpl k -> IO r) -> IO r
+getDelayImpl :: Int -> IO Delay
 #if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
-getDelayImpl cont = do
+getDelayImpl t0 = do
     m <- Ev.getSystemEventManager
     case m of
-        Nothing  -> cont implThread
-        Just mgr -> cont (implEvent mgr)
+        Nothing  -> implThread t0
+        Just mgr -> implEvent mgr t0
 #else
-getDelayImpl cont = cont implThread
+getDelayImpl = implThread
 #endif
 
 #if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 -- | Use the timeout API in "GHC.Event"
-implEvent :: Ev.EventManager -> DelayImpl Ev.TimeoutKey
-implEvent mgr = DelayImpl
-    { delayStart  = Ev.registerTimeout mgr
-    , delayUpdate = \_ -> Ev.updateTimeout mgr
-    , delayStop   = Ev.unregisterTimeout mgr
-    }
+implEvent :: Ev.EventManager -> Int -> IO Delay
+implEvent mgr t0 = do
+    var <- newTVarIO False
+    k <- Ev.registerTimeout mgr t0 $ atomically $ writeTVar var True
+    return Delay
+        { delayVar    = var
+        , delayUpdate = Ev.updateTimeout mgr k
+        , delayCancel = Ev.unregisterTimeout mgr k
+        }
 #endif
 
 -- | Use threads and threadDelay:
 --
---  [delayStart] Fork a thread to wait the given length of time,
---               then set the TVar.
+--  [init]
+--      Fork a thread to wait the given length of time, then set the TVar.
 --
---  [delayUpdate] Stop the existing thread and fork a new thread.
+--  [delayUpdate]
+--      Stop the existing thread and (unless the delay has been canceled)
+--      fork a new thread.
 --
---  [delayStop] Stop the existing thread.
-implThread :: DelayImpl (MVar (Maybe TimeoutThread))
-implThread = DelayImpl
-    { delayStart  = \t io -> forkTimeoutThread t io >>= newMVar . Just
-    , delayUpdate = \io mv t -> replaceThread (Just <$> forkTimeoutThread t io) mv
-    , delayStop   = replaceThread (return Nothing)
-    }
-  where
-    replaceThread new mv =
-        join $ mask_ $ do
-            m <- takeMVar mv
-            case m of
+--  [delayCancel]
+--      Stop the existing thread, if any.
+implThread :: Int -> IO Delay
+implThread t0 = do
+    var <- newTVarIO False
+    let new t = forkTimeoutThread t $ atomically $ writeTVar var True
+    mv <- new t0 >>= newMVar . Just
+    return Delay
+        { delayVar    = var
+        , delayUpdate = replaceThread mv . fmap Just . new
+        , delayCancel = replaceThread mv $ return Nothing
+        }
+
+replaceThread :: MVar (Maybe TimeoutThread)
+              -> IO (Maybe TimeoutThread)
+              -> IO ()
+replaceThread mv new =
+  join $ mask_ $ do
+    m <- takeMVar mv
+    case m of
+        Nothing -> do
+            -- Don't create a new timer thread after the 'Delay' has
+            -- been canceled.  Otherwise, the behavior is inconsistent
+            -- with GHC.Event.
+            putMVar mv Nothing
+            return (return ())
+        Just tt -> do
+            m' <- stopTimeoutThread tt
+            case m' of
                 Nothing -> do
-                    -- Don't create a new timer thread after the 'Delay' has
-                    -- been canceled.  Otherwise, the behavior is inconsistent
-                    -- with GHC.Event.
+                    -- Timer already rang (or will ring very soon).
+                    -- Don't start a new timer thread, as it would
+                    -- waste resources and have no externally
+                    -- observable effect.
                     putMVar mv Nothing
-                    return (return ())
-                Just tt -> do
-                    m' <- stopTimeoutThread tt
-                    case m' of
-                        Nothing -> do
-                            -- Timer already rang (or will ring very soon).
-                            -- Don't start a new timer thread, as it would
-                            -- waste resources and have no externally
-                            -- observable effect.
-                            putMVar mv Nothing
-                            return $ return ()
-                        Just kill -> do
-                            new >>= putMVar mv
-                            return kill
+                    return $ return ()
+                Just kill -> do
+                    new >>= putMVar mv
+                    return kill
 
 ------------------------------------------------------------------------
 -- TimeoutThread
@@ -210,7 +202,7 @@ forkTimeoutThread t io = do
 -- simply doing it.  This lets the caller do it outside of a critical section.
 stopTimeoutThread :: TimeoutThread -> IO (Maybe (IO ()))
 stopTimeoutThread (TimeoutThread tid mv) =
-    maybe Nothing (\_ -> Just (killThread tid)) <$> tryTakeMVar mv
+    maybe Nothing (\_ -> Just (killThread tid)) `fmap` tryTakeMVar mv
 
 ------------------------------------------------------------------------
 -- Compatibility
