@@ -148,7 +148,7 @@ implThread = DelayImpl
                     case m' of
                         Nothing -> do
                             -- Timer already rang (or will ring very soon).
-                            -- Don't start a new timer thread, since it will
+                            -- Don't start a new timer thread, as it would
                             -- waste resources and have no externally
                             -- observable effect.
                             putMVar mv Nothing
