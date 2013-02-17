@@ -8,7 +8,11 @@
 -- Maintainer:  joeyadams3.14159@gmail.com
 -- Portability: Requires GHC 7+
 --
--- One-shot timer whose duration can be updated.
+-- One-shot timer whose duration can be updated.  Think of it as an enhanced
+-- version of 'registerDelay'.
+--
+-- This uses "GHC.Event" when available (GHC 7.2+, @-threaded@, non-Windows OS).
+-- Otherwise, it falls back to forked threads and 'threadDelay'.
 module Control.Concurrent.STM.Delay (
     -- * Managing delays
     Delay,
@@ -257,4 +261,31 @@ to an exception:
 @
   'atomically' $ 'waitDelay' delay \`orElse\` 'readTMVar' dead
 @
+
+Warning:
+
+ * If /handleMessage/ blocks, the 'Delay' may ring due to @handleMessage@
+   taking too long, rather than just @recvMessage@ taking too long.
+
+ * The loop will continue to run until you do something to stop it.
+
+It might be simpler to use "System.Timeout" instead:
+
+@
+  m <- 'System.Timeout.timeout' timeoutInterval recvMessage
+  case m of
+      Nothing  -> 'fail' \"timed out\"
+      Just msg -> handleMessage msg
+@
+
+However, using a 'Delay' has the following advantages:
+
+ * If @recvMessage@ makes a blocking FFI call (e.g. network I/O on Windows),
+   'System.Timeout.timeout' won't work, since it uses an asynchronous
+   exception, and FFI calls can't be interrupted with async exceptions.
+   The 'Delay' approach lets you handle the timeout in another thread,
+   while the FFI call is still blocked.
+
+ * 'updateDelay' is more efficient than 'System.Timeout.timeout' when
+   "GHC.Event" is available.
 -}
