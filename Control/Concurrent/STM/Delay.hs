@@ -180,11 +180,6 @@ implThread = DelayImpl
 
 data TimeoutThread = TimeoutThread !ThreadId !(MVar ())
 
--- instance Eq TimeoutThread where
---     (==) (TimeoutThread a _) (TimeoutThread b _) = a == b
--- instance Ord TimeoutThread where
---     compare (TimeoutThread a _) (TimeoutThread b _) = compare a b
-
 -- | Fork a thread to perform an action after the given number of
 -- microseconds.
 --
