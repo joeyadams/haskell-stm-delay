@@ -27,10 +27,13 @@ module Control.Concurrent.STM.Delay (
     -- $example
 ) where
 
-import Control.Concurrent
 import Control.Concurrent.STM
+
+#if !MIN_VERSION_base(4,7,0)
+import Control.Concurrent
 import Control.Exception        (mask_)
 import Control.Monad
+#endif
 
 #if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 import qualified GHC.Event as Ev
@@ -95,7 +98,11 @@ tryWaitDelayIO = readTVarIO . delayVar
 -- Drivers
 
 getDelayImpl :: Int -> IO Delay
-#if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
+#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
+getDelayImpl t0 = do
+    mgr <- Ev.getSystemTimerManager
+    implEvent mgr t0
+#elif MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 getDelayImpl t0 = do
     m <- Ev.getSystemEventManager
     case m of
@@ -105,7 +112,18 @@ getDelayImpl t0 = do
 getDelayImpl = implThread
 #endif
 
-#if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
+#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
+-- | Use the timeout API in "GHC.Event" via TimerManager
+--implEvent :: Ev.TimerManager -> Int -> IO Delay
+implEvent mgr t0 = do
+    var <- newTVarIO False
+    k <- Ev.registerTimeout mgr t0 $ atomically $ writeTVar var True
+    return Delay
+        { delayVar    = var
+        , delayUpdate = Ev.updateTimeout mgr k
+        , delayCancel = Ev.unregisterTimeout mgr k
+        }
+#elif MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 -- | Use the timeout API in "GHC.Event"
 implEvent :: Ev.EventManager -> Int -> IO Delay
 implEvent mgr t0 = do
@@ -117,6 +135,8 @@ implEvent mgr t0 = do
         , delayCancel = Ev.unregisterTimeout mgr k
         }
 #endif
+
+#if !MIN_VERSION_base (4,7,0)
 
 -- | Use threads and threadDelay:
 --
@@ -212,6 +232,8 @@ compat_forkIOUnmasked :: IO () -> IO ThreadId
 compat_forkIOUnmasked io = forkIOWithUnmask (\_ -> io)
 #else
 compat_forkIOUnmasked = forkIOUnmasked
+#endif
+
 #endif
 
 ------------------------------------------------------------------------
