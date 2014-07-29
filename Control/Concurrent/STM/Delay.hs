@@ -27,16 +27,17 @@ module Control.Concurrent.STM.Delay (
     -- $example
 ) where
 
-import Control.Concurrent.STM
-
-#if !MIN_VERSION_base(4,7,0)
 import Control.Concurrent
+import Control.Concurrent.STM
 import Control.Exception        (mask_)
 import Control.Monad
-#endif
 
 #if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 import qualified GHC.Event as Ev
+#endif
+
+#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
+import qualified GHC.Conc as Conc
 #endif
 
 -- | A 'Delay' is an updatable timer that rings only once.
@@ -100,8 +101,13 @@ tryWaitDelayIO = readTVarIO . delayVar
 getDelayImpl :: Int -> IO Delay
 #if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
 getDelayImpl t0 = do
-    mgr <- Ev.getSystemTimerManager
-    implEvent mgr t0
+    Conc.ensureIOManagerIsRunning
+    m <- Ev.getSystemEventManager
+    case m of
+        Nothing  -> implThread t0
+        Just _ -> do
+            mgr <- Ev.getSystemTimerManager
+            implEvent mgr t0
 #elif MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 getDelayImpl t0 = do
     m <- Ev.getSystemEventManager
@@ -135,8 +141,6 @@ implEvent mgr t0 = do
         , delayCancel = Ev.unregisterTimeout mgr k
         }
 #endif
-
-#if !MIN_VERSION_base (4,7,0)
 
 -- | Use threads and threadDelay:
 --
@@ -232,8 +236,6 @@ compat_forkIOUnmasked :: IO () -> IO ThreadId
 compat_forkIOUnmasked io = forkIOWithUnmask (\_ -> io)
 #else
 compat_forkIOUnmasked = forkIOUnmasked
-#endif
-
 #endif
 
 ------------------------------------------------------------------------
