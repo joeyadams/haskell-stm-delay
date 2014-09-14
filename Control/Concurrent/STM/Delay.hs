@@ -36,6 +36,10 @@ import Control.Monad
 import qualified GHC.Event as Ev
 #endif
 
+#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
+import qualified GHC.Conc as Conc
+#endif
+
 -- | A 'Delay' is an updatable timer that rings only once.
 data Delay = Delay
     { delayVar    :: !(TVar Bool)
@@ -95,7 +99,16 @@ tryWaitDelayIO = readTVarIO . delayVar
 -- Drivers
 
 getDelayImpl :: Int -> IO Delay
-#if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
+#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
+getDelayImpl t0 = do
+    Conc.ensureIOManagerIsRunning
+    m <- Ev.getSystemEventManager
+    case m of
+        Nothing  -> implThread t0
+        Just _ -> do
+            mgr <- Ev.getSystemTimerManager
+            implEvent mgr t0
+#elif MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 getDelayImpl t0 = do
     m <- Ev.getSystemEventManager
     case m of
@@ -105,7 +118,18 @@ getDelayImpl t0 = do
 getDelayImpl = implThread
 #endif
 
-#if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
+#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
+-- | Use the timeout API in "GHC.Event" via TimerManager
+--implEvent :: Ev.TimerManager -> Int -> IO Delay
+implEvent mgr t0 = do
+    var <- newTVarIO False
+    k <- Ev.registerTimeout mgr t0 $ atomically $ writeTVar var True
+    return Delay
+        { delayVar    = var
+        , delayUpdate = Ev.updateTimeout mgr k
+        , delayCancel = Ev.unregisterTimeout mgr k
+        }
+#elif MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
 -- | Use the timeout API in "GHC.Event"
 implEvent :: Ev.EventManager -> Int -> IO Delay
 implEvent mgr t0 = do
