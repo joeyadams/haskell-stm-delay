@@ -1,5 +1,5 @@
 name:               stm-delay
-version:            0.1.1
+version:            0.1.1.1
 synopsis:           Updatable one-shot timer polled with STM
 description:
     This library lets you create a one-shot timer, poll it using STM,
