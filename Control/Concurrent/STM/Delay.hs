@@ -32,11 +32,11 @@ import Control.Concurrent.STM
 import Control.Exception        (mask_)
 import Control.Monad
 
-#if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
+#if MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS && !ghcjs_HOST_OS
 import qualified GHC.Event as Ev
 #endif
 
-#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
+#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS && !ghcjs_HOST_OS
 import qualified GHC.Conc as Conc
 #endif
 
@@ -99,7 +99,7 @@ tryWaitDelayIO = readTVarIO . delayVar
 -- Drivers
 
 getDelayImpl :: Int -> IO Delay
-#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
+#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS && !ghcjs_HOST_OS
 getDelayImpl t0 = do
     Conc.ensureIOManagerIsRunning
     m <- Ev.getSystemEventManager
@@ -108,7 +108,7 @@ getDelayImpl t0 = do
         Just _ -> do
             mgr <- Ev.getSystemTimerManager
             implEvent mgr t0
-#elif MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
+#elif MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS && !ghcjs_HOST_OS
 getDelayImpl t0 = do
     m <- Ev.getSystemEventManager
     case m of
@@ -118,7 +118,7 @@ getDelayImpl t0 = do
 getDelayImpl = implThread
 #endif
 
-#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS
+#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS && !ghcjs_HOST_OS
 -- | Use the timeout API in "GHC.Event" via TimerManager
 --implEvent :: Ev.TimerManager -> Int -> IO Delay
 implEvent mgr t0 = do
@@ -129,7 +129,7 @@ implEvent mgr t0 = do
         , delayUpdate = Ev.updateTimeout mgr k
         , delayCancel = Ev.unregisterTimeout mgr k
         }
-#elif MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS
+#elif MIN_VERSION_base(4,4,0) && !mingw32_HOST_OS && !ghcjs_HOST_OS
 -- | Use the timeout API in "GHC.Event"
 implEvent :: Ev.EventManager -> Int -> IO Delay
 implEvent mgr t0 = do
