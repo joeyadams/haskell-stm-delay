@@ -37,10 +37,6 @@ import Control.Monad
 import qualified GHC.Event as Ev
 #endif
 
-#if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS && !ghcjs_HOST_OS
-import qualified GHC.Conc as Conc
-#endif
-
 -- | A 'Delay' is an updatable timer that rings only once.
 data Delay = Delay
     { delayVar    :: !(TVar Bool)
@@ -102,10 +98,9 @@ tryWaitDelayIO = readTVarIO . delayVar
 getDelayImpl :: Int -> IO Delay
 #if MIN_VERSION_base(4,7,0) && !mingw32_HOST_OS && !ghcjs_HOST_OS
 getDelayImpl t0 = do
-    Conc.ensureIOManagerIsRunning
     m <- Ev.getSystemEventManager
     case m of
-        Nothing  -> implThread t0
+        Nothing -> implThread t0
         Just _ -> do
             mgr <- Ev.getSystemTimerManager
             implEvent mgr t0
