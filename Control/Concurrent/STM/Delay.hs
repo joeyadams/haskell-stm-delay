@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# OPTIONS_GHC -Wno-missing-signatures #-}
 -- |
 -- Module:      Control.Concurrent.STM.Delay
 -- Copyright:   (c) Joseph Adams 2012

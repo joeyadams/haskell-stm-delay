@@ -60,8 +60,10 @@ test-suite test
                  -fno-warn-unused-matches
 
     build-depends: base >= 4.3 && < 5
+                 , async
                  , stm
                  , stm-delay
+                 , time
 
 test-suite test-threaded
     type: exitcode-stdio-1.0
@@ -76,5 +78,7 @@ test-suite test-threaded
                  -fno-warn-unused-matches
 
     build-depends: base >= 4.3 && < 5
+                 , async
                  , stm
                  , stm-delay
+                 , time
